@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI-Based Bulk Fruit Detection</title>
+<style>
+:root{--bg:#fff;--fg:#2b4a63;--accent:#3a5f7d;--soft:#eef2f6;--line:#d5dde5}
+@media (prefers-color-scheme:dark){:root{--bg:#121a21;--fg:#d8e3ec;--accent:#7fa8c9;--soft:#1b2630;--line:#2c3b48}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.6}
+header{background:var(--accent);color:#fff;text-align:center;padding:48px 16px}
+header h1{margin:0 0 8px;font-size:clamp(1.8rem,5vw,3rem);letter-spacing:1px}
+header p{margin:0;opacity:.9}
+main{max-width:960px;margin:0 auto;padding:24px 16px}
+section{margin:32px 0}
+h2{color:var(--accent);border-bottom:2px solid var(--line);padding-bottom:6px}
+ul{padding-left:20px}
+.card{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:20px}
+button,input[type=file]{font:inherit}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 20px;cursor:pointer}
+button:disabled{opacity:.5}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+canvas{max-width:100%;height:auto;margin-top:16px;border-radius:10px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.chip{background:var(--accent);color:#fff;border-radius:999px;padding:4px 14px}
+.total{font-size:1.4rem;font-weight:700;margin-top:12px}
+.table{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid var(--line);padding:8px;text-align:left}
+.steps{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.step{background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:6px 14px}
+footer{text-align:center;padding:24px;color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>AI-Based Bulk Fruit Detection</h1>
+  <p>Mini Project · Shaganaa S · 24UVA050 · 23VAIS09</p>
+</header>
+<main>
+
+<section id="demo">
+  <h2>Live Demo</h2>
+  <div class="card">
+    <div class="row">
+      <input type="file" id="file" accept="image/*">
+      <button id="go" disabled>Detect &amp; Count</button>
+      <span id="status"></span>
+    </div>
+    <canvas id="cv" hidden></canvas>
+    <div class="total" id="total"></div>
+    <div class="chips" id="chips"></div>
+  </div>
+</section>
+
+<section>
+  <h2>Abstract</h2>
+  <ul>
+    <li>AI helps machines identify objects from images.</li>
+    <li>Fruit detection can be automated using computer vision.</li>
+    <li>Useful for farms, warehouses, supermarkets, and industries.</li>
+    <li>Reduces manual effort and improves accuracy.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Problem Statement</h2>
+  <ul>
+    <li>Manual fruit counting is time-consuming.</li>
+    <li>Large quantities of fruits are difficult to inspect manually.</li>
+    <li>Human errors may occur during counting and classification.</li>
+    <li>Need for a fast and automated solution.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Objectives</h2>
+  <ul>
+    <li>Detect multiple fruits in a single image.</li>
+    <li>Identify different fruit types.</li>
+    <li>Count the detected fruits automatically.</li>
+    <li>Provide fast and accurate results.</li>
+    <li>Reduce human involvement.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Literature Review</h2>
+  <div class="table"><table>
+    <tr><th>S.No</th><th>Author(s)</th><th>Year</th><th>Method</th><th>Key Finding</th></tr>
+    <tr><td>1</td><td>Sa et al.</td><td>2016</td><td>Faster R-CNN</td><td>Detected multiple fruit types using deep learning in natural field conditions.</td></tr>
+    <tr><td>2</td><td>Mureșan &amp; Oltean</td><td>2017</td><td>CNN / Deep Learning</td><td>Developed a fruit image dataset and demonstrated effective fruit recognition.</td></tr>
+    <tr><td>3</td><td>Rahnemoonfar &amp; Sheppard</td><td>2017</td><td>Improved Inception-ResNet</td><td>Improved fruit counting under shadows, overlapping and occlusion.</td></tr>
+    <tr><td>4</td><td>Koirala et al.</td><td>2019</td><td>Deep Learning / YOLO</td><td>Reviewed deep-learning methods for fruit detection and yield estimation.</td></tr>
+    <tr><td>5</td><td>Kang &amp; Chen</td><td>2019</td><td>LedNet / Deep Learning</td><td>Fast and accurate real-time apple detection in orchards.</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>Methodology</h2>
+  <div class="steps">
+    <span class="step">Input Image</span>→<span class="step">Preprocessing</span>→<span class="step">YOLO / CNN Detection</span>→<span class="step">Fruit Detection</span>→<span class="step">Classification &amp; Count</span>→<span class="step">Bounding Boxes + Type + Total</span>
+  </div>
+</section>
+
+<section>
+  <h2>Technologies Used</h2>
+  <div class="chips">
+    <span class="chip">Python</span><span class="chip">Flask</span><span class="chip">Computer Vision</span>
+    <span class="chip">Object Detection</span><span class="chip">YOLO / CNN</span><span class="chip">OpenCV</span><span class="chip">Roboflow</span>
+  </div>
+</section>
+
+<section>
+  <h2>Conclusion</h2>
+  <ul>
+    <li>AI enables fast and automated fruit detection.</li>
+    <li>The system identifies, classifies and counts multiple fruits.</li>
+    <li>Automatic counting reduces manual effort and errors.</li>
+    <li>Future work: fruit quality and ripeness detection.</li>
+  </ul>
+</section>
+
+</main>
+<footer>Thank you</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const file = $("file"), go = $("go"), cv = $("cv"), ctx = cv.getContext("2d");
+let img = null;
+
+file.onchange = () => {
+  const f = file.files[0];
+  if (!f) return;
+  img = new Image();
+  img.onload = () => {
+    cv.width = img.width; cv.height = img.height;
+    ctx.drawImage(img, 0, 0); cv.hidden = false;
+    go.disabled = false; $("total").textContent = ""; $("chips").innerHTML = "";
+  };
+  img.src = URL.createObjectURL(f);
+};
+
+// Find detection objects anywhere in the workflow response.
+function findPreds(node, out = []) {
+  if (Array.isArray(node)) node.forEach(n => findPreds(n, out));
+  else if (node && typeof node === "object") {
+    if ("class" in node && "x" in node && "width" in node) out.push(node);
+    else Object.values(node).forEach(v => findPreds(v, out));
+  }
+  return out;
+}
+
+go.onclick = async () => {
+  go.disabled = true; $("status").textContent = "Detecting…";
+  try {
+    const fd = new FormData(); fd.append("image", file.files[0]);
+    const res = await fetch("/api/detect", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Request failed");
+    const preds = findPreds(data);
+    ctx.drawImage(img, 0, 0);
+    const counts = {};
+    const lw = Math.max(2, img.width / 300);
+    preds.forEach(p => {
+      counts[p.class] = (counts[p.class] || 0) + 1;
+      const x = p.x - p.width / 2, y = p.y - p.height / 2;
+      ctx.lineWidth = lw; ctx.strokeStyle = "#e8590c"; ctx.strokeRect(x, y, p.width, p.height);
+      ctx.fillStyle = "#e8590c"; ctx.font = `${lw * 6}px sans-serif`;
+      ctx.fillText(p.class, x + 2, Math.max(lw * 6, y - 4));
+    });
+    $("total").textContent = `Total fruits: ${preds.length}`;
+    $("chips").innerHTML = Object.entries(counts)
+      .map(([k, v]) => `<span class="chip">${k}: ${v}</span>`).join("");
+    $("status").textContent = preds.length ? "" : "No fruits detected.";
+  } catch (e) {
+    $("status").textContent = "Error: " + e.message;
+  } finally { go.disabled = false; }
+};
+</script>
+</body>
+</html>

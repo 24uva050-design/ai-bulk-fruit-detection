@@ -38,6 +38,7 @@ def detect():
     out = sess.run(None, {INPUT: x})[0][0].T  # (8400, 4 + classes)
     scores = out[:, 4:]
     cls, conf = scores.argmax(1), scores.max(1)
+        top = float(conf.max())
     keep = conf > CONF
     boxes, cls, conf = out[keep, :4] / r, cls[keep], conf[keep]
 
@@ -51,6 +52,8 @@ def detect():
         }
         for i in np.array(idx).flatten()
     ]
+    if not preds:
+        return jsonify(error=f"Nothing found. Highest score: {top:.2f}"), 422s
     return jsonify(predictions=preds)
 
 

@@ -8,7 +8,7 @@ from flask import Flask, jsonify, render_template, request
 app = Flask(__name__)
 
 SIZE = 640
-CONF = 0.19
+CONF = 0.20
 sess = ort.InferenceSession("best.onnx", providers=["CPUExecutionProvider"])
 INPUT = sess.get_inputs()[0].name
 NAMES = ast.literal_eval(sess.get_modelmeta().custom_metadata_map["names"])

@@ -104,8 +104,14 @@ def detect():
         for x0, y0, t in tiles(img):  # small fruits: also scan tiles (COCO model only)
             for a, b, c, d, cf, nm in infer(MODELS[0], t):
                 dets.append((a + x0, b + y0, c + x0, d + y0, cf, nm))
-        dets = drop_groups(nms(dets))
-
+                 dets = drop_groups(nms(dets))
+           H, W = img.shape[:2]
+           if len(dets) >= 4:
+               dets = [
+                   d for d in dets
+                   if d[5] in ("Pineapple", "Watermelon", "Grape", "Grapes")
+                   or (d[2] - d[0]) * (d[3] - d[1]) < 0.10 * W * H
+               ]
         preds = [
             {
                 "x": float((d[0] + d[2]) / 2), "y": float((d[1] + d[3]) / 2),

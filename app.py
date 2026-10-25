@@ -25,23 +25,58 @@ MODELS = [
 ]
 
 
-def run(model, x, r):
+def infer(model, img):
+    """Run one model on a BGR image. Returns (x1, y1, x2, y2, conf, name) tuples."""
     sess, inp, names, mask = model
+    h, w = img.shape[:2]
+    r = SIZE / max(h, w)
+    nh, nw = int(round(h * r)), int(round(w * r))
+    canvas = np.full((SIZE, SIZE, 3), 114, np.uint8)
+    canvas[:nh, :nw] = cv2.resize(img, (nw, nh))
+    x = np.ascontiguousarray(canvas[:, :, ::-1].transpose(2, 0, 1)[None]).astype(np.float32) / 255
     out = sess.run(None, {inp: x})[0][0].T
     scores = out[:, 4:] * mask
     cls, conf = scores.argmax(1), scores.max(1)
     keep = conf > CONF
     boxes, cls, conf = out[keep, :4] / r, cls[keep], conf[keep]
-    rects = [[int(cx - bw / 2), int(cy - bh / 2), int(bw), int(bh)] for cx, cy, bw, bh in boxes]
-    idx = cv2.dnn.NMSBoxes(rects, conf.tolist(), CONF, 0.5) if rects else []
     return [
-        {
-            "x": float(boxes[i][0]), "y": float(boxes[i][1]),
-            "width": float(boxes[i][2]), "height": float(boxes[i][3]),
-            "class": names[int(cls[i])].title(), "confidence": float(conf[i]),
-        }
-        for i in np.array(idx).flatten()
+        (cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2, float(c), names[int(k)].title())
+        for (cx, cy, bw, bh), c, k in zip(boxes, conf, cls)
     ]
+
+
+def tiles(img, n=2, overlap=0.2):
+    h, w = img.shape[:2]
+    th, tw = int(h / n * (1 + overlap)), int(w / n * (1 + overlap))
+    for i in range(n):
+        for j in range(n):
+            y0 = min(int(i * h / n), h - th)
+            x0 = min(int(j * w / n), w - tw)
+            yield x0, y0, img[y0:y0 + th, x0:x0 + tw]
+
+
+def nms(dets, thr=0.5):
+    out = []
+    for name in {d[5] for d in dets}:
+        ds = [d for d in dets if d[5] == name]
+        rects = [[int(d[0]), int(d[1]), int(d[2] - d[0]), int(d[3] - d[1])] for d in ds]
+        idx = cv2.dnn.NMSBoxes(rects, [d[4] for d in ds], CONF, thr)
+        out += [ds[int(i)] for i in np.array(idx).flatten()]
+    return out
+
+
+def drop_groups(dets):
+    """Remove one big box that covers 3 or more smaller boxes of the same fruit."""
+    keep = []
+    for a in dets:
+        inside = sum(
+            1 for b in dets
+            if b is not a and b[5] == a[5]
+            and a[0] <= (b[0] + b[2]) / 2 <= a[2] and a[1] <= (b[1] + b[3]) / 2 <= a[3]
+        )
+        if inside < 3:
+            keep.append(a)
+    return keep
 
 
 @app.get("/")
@@ -64,16 +99,22 @@ def detect():
         if img is None:
             return jsonify(error="Could not read this image. Try a JPG or PNG."), 400
 
-        h, w = img.shape[:2]
-        r = SIZE / max(h, w)
-        nh, nw = int(round(h * r)), int(round(w * r))
-        canvas = np.full((SIZE, SIZE, 3), 114, np.uint8)
-        canvas[:nh, :nw] = cv2.resize(img, (nw, nh))
-        x = np.ascontiguousarray(canvas[:, :, ::-1].transpose(2, 0, 1)[None]).astype(np.float32) / 255
-
-        preds = []
+        dets = []
         for m in MODELS:
-            preds += run(m, x, r)
+            dets += infer(m, img)
+        for x0, y0, t in tiles(img):  # small fruits: also scan tiles (COCO model only)
+            for a, b, c, d, cf, nm in infer(MODELS[0], t):
+                dets.append((a + x0, b + y0, c + x0, d + y0, cf, nm))
+        dets = drop_groups(nms(dets))
+
+        preds = [
+            {
+                "x": float((d[0] + d[2]) / 2), "y": float((d[1] + d[3]) / 2),
+                "width": float(d[2] - d[0]), "height": float(d[3] - d[1]),
+                "class": d[5], "confidence": d[4],
+            }
+            for d in dets
+        ]
         return jsonify(predictions=preds)
     except Exception:
         return jsonify(error="Something went wrong while detecting. Please try another image."), 500

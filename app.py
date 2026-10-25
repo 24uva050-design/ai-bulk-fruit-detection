@@ -21,7 +21,7 @@ app = Flask(__name__)
 SIZE = 640
 CONF = 0.25
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-LOCAL_FALLBACK = os.getenv("LOCAL_FALLBACK", "0") == "1"
+LOCAL_FALLBACK = os.getenv("LOCAL_FALLBACK", "1") == "1"
 client = genai.Client(api_key=GEMINI_KEY) if (genai and GEMINI_KEY) else None
 
 MODEL_CANDIDATES = []

@@ -44,8 +44,7 @@ def infer(model, img):
         for (cx, cy, bw, bh), c, k in zip(boxes, conf, cls)
     ]
 
-
-def tiles(img, n=2, overlap=0.2):
+   def tiles(img, n=3, overlap=0.2):
     h, w = img.shape[:2]
     th, tw = int(h / n * (1 + overlap)), int(w / n * (1 + overlap))
     for i in range(n):

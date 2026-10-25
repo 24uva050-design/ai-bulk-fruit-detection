@@ -1,6 +1,7 @@
 import ast
 import json
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import cv2
@@ -13,14 +14,21 @@ try:
     from google.genai import types
 except Exception:
     genai = None
+    types = None
 
 app = Flask(__name__)
 
 SIZE = 640
 CONF = 0.25
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+LOCAL_FALLBACK = os.getenv("LOCAL_FALLBACK", "0") == "1"
 client = genai.Client(api_key=GEMINI_KEY) if (genai and GEMINI_KEY) else None
+
+MODEL_CANDIDATES = []
+for _m in [os.getenv("GEMINI_MODEL"), "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+    if _m and _m not in MODEL_CANDIDATES:
+        MODEL_CANDIDATES.append(_m)
+WORKING_MODEL = None
 
 FRUITS = ["pineapple", "watermelon", "orange", "banana", "apple"]  # pineapple first (contains "apple")
 ALIASES = {"mandarin": "Orange", "tangerine": "Orange", "clementine": "Orange"}
@@ -48,7 +56,7 @@ def clean_label(label):
     return None
 
 
-# ---------- local models (fallback) ----------
+# ---------- local models (optional fallback) ----------
 def load(path, allowed):
     sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
     names = ast.literal_eval(sess.get_modelmeta().custom_metadata_map["names"])
@@ -56,10 +64,14 @@ def load(path, allowed):
     return sess, sess.get_inputs()[0].name, names, mask
 
 
-MODELS = [
-    load("yolov8n.onnx", {"apple", "orange", "banana"}),
-    load("best.onnx", {"pineapple", "watermelon"}),
-]
+try:
+    MODELS = [
+        load("yolov8n.onnx", {"apple", "orange", "banana"}),
+        load("best.onnx", {"pineapple", "watermelon"}),
+    ]
+except Exception as e:
+    print("Local models not loaded:", repr(e))
+    MODELS = []
 
 
 def infer(model, img):
@@ -115,6 +127,8 @@ def drop_groups(dets):
 
 
 def local_detect(img):
+    if not MODELS:
+        return []
     dets = []
     for m in MODELS:
         dets += infer(m, img)
@@ -125,16 +139,35 @@ def local_detect(img):
 
 
 # ---------- Gemini (main) ----------
+def generate(contents, config=None):
+    """Call Gemini. Tries other model names if one is not found, retries on rate limit."""
+    global WORKING_MODEL
+    last = None
+    for model in ([WORKING_MODEL] if WORKING_MODEL else MODEL_CANDIDATES):
+        for attempt in range(3):
+            try:
+                r = client.models.generate_content(model=model, contents=contents, config=config)
+                WORKING_MODEL = model
+                return r
+            except Exception as e:
+                last = e
+                msg = str(e)
+                if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                    time.sleep(4 * (attempt + 1))
+                    continue
+                break
+    raise last
+
+
 def ask(img):
     h, w = img.shape[:2]
     if max(h, w) > 1600:
         s = 1600 / max(h, w)
         img = cv2.resize(img, (int(w * s), int(h * s)))
     ok, buf = cv2.imencode(".jpg", img)
-    resp = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[types.Part.from_bytes(data=buf.tobytes(), mime_type="image/jpeg"), PROMPT],
-        config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
+    resp = generate(
+        [types.Part.from_bytes(data=buf.tobytes(), mime_type="image/jpeg"), PROMPT],
+        types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
     )
     return json.loads(resp.text)
 
@@ -142,6 +175,8 @@ def ask(img):
 def to_dets(items, x0, y0, w, h):
     dets = []
     for it in items:
+        if not isinstance(it, dict):
+            continue
         name = clean_label(str(it.get("label", "")))
         if not name:
             continue
@@ -161,13 +196,14 @@ def gemini_detect(img):
             return to_dets(ask(t), x0, y0, t.shape[1], t.shape[0])
         except Exception as e:
             print("Gemini call failed:", repr(e))
+            if x0 == 0 and y0 == 0 and t is img:
+                raise
             return None
 
-    with ThreadPoolExecutor(max_workers=5) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         results = list(ex.map(safe, jobs))
-    if results[0] is None:
-        raise RuntimeError("full-image Gemini call failed")
-    return nms([d for r in results if r for d in r], 0.5)
+    merged = [d for r in results if r for d in r]
+    return drop_groups(nms(merged, 0.4))
 
 
 @app.get("/")
@@ -177,7 +213,23 @@ def home():
 
 @app.get("/health")
 def health():
-    return "ok"
+    return (
+        f"ok | key: {'set' if GEMINI_KEY else 'MISSING'} | library: {'ok' if genai else 'MISSING'}"
+        f" | models: {MODEL_CANDIDATES} | local models loaded: {len(MODELS)}"
+    )
+
+
+@app.get("/gemini-test")
+def gemini_test():
+    if genai is None:
+        return "FAIL: google-genai library is not installed. Add google-genai to requirements.txt"
+    if not GEMINI_KEY:
+        return "FAIL: GEMINI_API_KEY is not set in Render Environment"
+    try:
+        r = generate("Reply with the single word OK")
+        return f"WORKS: model={WORKING_MODEL} reply={(r.text or '').strip()[:50]}"
+    except Exception as e:
+        return "FAIL: " + repr(e)[:600]
 
 
 @app.post("/api/detect")
@@ -190,14 +242,23 @@ def detect():
         if img is None:
             return jsonify(error="Could not read this image. Try a JPG or PNG."), 400
 
-        dets = None
-        if client:
+        dets, reason = None, None
+        if genai is None:
+            reason = "google-genai library is not installed"
+        elif not GEMINI_KEY:
+            reason = "GEMINI_API_KEY is not set"
+        else:
             try:
                 dets = gemini_detect(img)
             except Exception as e:
-                print("Gemini failed, using local models:", repr(e))
+                reason = str(e)[:200]
+                print("Gemini failed:", repr(e))
+
         if dets is None:
-            dets = local_detect(img)
+            if LOCAL_FALLBACK:
+                dets = local_detect(img)
+            else:
+                return jsonify(error=f"Gemini could not process this image: {reason}. Open /gemini-test for details."), 502
 
         preds = [
             {

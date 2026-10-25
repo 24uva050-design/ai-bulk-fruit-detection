@@ -14,6 +14,7 @@ header h1{margin:0;font-size:clamp(1.8rem,5vw,3rem);letter-spacing:1px}
 main{max-width:960px;margin:0 auto;padding:24px 16px}
 h2{color:var(--accent);border-bottom:2px solid var(--line);padding-bottom:6px}
 .card{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:20px}
+.hint{margin:0 0 14px;font-size:.95rem;opacity:.85}
 button,input[type=file]{font:inherit}
 button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 20px;cursor:pointer}
 button:disabled{opacity:.5}
@@ -22,6 +23,7 @@ canvas{max-width:100%;height:auto;margin-top:16px;border-radius:10px}
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .chip{background:var(--accent);color:#fff;border-radius:999px;padding:4px 14px}
 .total{font-size:1.4rem;font-weight:700;margin-top:12px}
+#status{margin-top:12px}
 </style>
 </head>
 <body>
@@ -31,11 +33,12 @@ canvas{max-width:100%;height:auto;margin-top:16px;border-radius:10px}
 <main>
   <h2>Live Demo</h2>
   <div class="card">
+    <p class="hint">Detects: Apple, Banana, Grape, Orange, Pineapple, Watermelon. Use a clear, well-lit photo.</p>
     <div class="row">
       <input type="file" id="file" accept="image/*">
       <button id="go" disabled>Detect &amp; Count</button>
-      <span id="status"></span>
     </div>
+    <div id="status"></div>
     <canvas id="cv" hidden></canvas>
     <div class="total" id="total"></div>
     <div class="chips" id="chips"></div>
@@ -54,29 +57,25 @@ file.onchange = () => {
   img.onload = () => {
     cv.width = img.width; cv.height = img.height;
     ctx.drawImage(img, 0, 0); cv.hidden = false;
-    go.disabled = false; $("total").textContent = ""; $("chips").innerHTML = "";
+    go.disabled = false;
+    $("total").textContent = ""; $("chips").innerHTML = ""; $("status").textContent = "";
   };
   img.src = URL.createObjectURL(f);
 };
 
-// Find detection objects anywhere in the workflow response.
-function findPreds(node, out = []) {
-  if (Array.isArray(node)) node.forEach(n => findPreds(n, out));
-  else if (node && typeof node === "object") {
-    if ("class" in node && "x" in node && "width" in node) out.push(node);
-    else Object.values(node).forEach(v => findPreds(v, out));
-  }
-  return out;
-}
-
 go.onclick = async () => {
-  go.disabled = true; $("status").textContent = "Detecting…";
+  go.disabled = true;
+  $("status").textContent = "Detecting… the first request can take up to a minute while the server wakes up.";
   try {
     const fd = new FormData(); fd.append("image", file.files[0]);
     const res = await fetch("/api/detect", { method: "POST", body: fd });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Request failed");
-    const preds = findPreds(data);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error("The server is waking up. Please wait 30 seconds and press Detect again."); }
+    if (!res.ok) throw new Error(data.error || "Please try again.");
+
+    const preds = data.predictions || [];
     ctx.drawImage(img, 0, 0);
     const counts = {};
     const lw = Math.max(2, img.width / 300);
@@ -90,9 +89,10 @@ go.onclick = async () => {
     $("total").textContent = `Total fruits: ${preds.length}`;
     $("chips").innerHTML = Object.entries(counts)
       .map(([k, v]) => `<span class="chip">${k}: ${v}</span>`).join("");
-    $("status").textContent = preds.length ? "" : "No fruits detected.";
+    $("status").textContent = preds.length ? "" :
+      "No fruits detected. Try a clear photo of an apple, banana, orange, grape, pineapple or watermelon.";
   } catch (e) {
-    $("status").textContent = "Error: " + e.message;
+    $("status").textContent = e.message;
   } finally { go.disabled = false; }
 };
 </script>

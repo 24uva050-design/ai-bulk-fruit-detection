@@ -1,16 +1,54 @@
 import ast
+import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
 import onnxruntime as ort
 from flask import Flask, jsonify, render_template, request
 
+try:
+    from google import genai
+    from google.genai import types
+except Exception:
+    genai = None
+
 app = Flask(__name__)
 
 SIZE = 640
 CONF = 0.25
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+client = genai.Client(api_key=GEMINI_KEY) if (genai and GEMINI_KEY) else None
+
+FRUITS = ["pineapple", "watermelon", "orange", "banana", "apple"]  # pineapple first (contains "apple")
+ALIASES = {"mandarin": "Orange", "tangerine": "Orange", "clementine": "Orange"}
+
+PROMPT = (
+    "Detect every individual fruit of these types only: apple, orange, banana, pineapple, "
+    "watermelon (whole or cut). Ignore all other fruits and objects. Include small, distant "
+    "and partly hidden fruits. Use exactly one box per single fruit (one per banana, one per "
+    "apple), never one box for a pile, bunch or crate. Return a JSON list of "
+    "{\"box_2d\": [ymin, xmin, ymax, xmax], \"label\": \"apple|orange|banana|pineapple|watermelon\"} "
+    "with box values normalized to 0-1000. If there are none, return []."
+)
 
 
+def clean_label(label):
+    l = label.lower()
+    if "custard" in l or "sugar apple" in l:
+        return None
+    for k, v in ALIASES.items():
+        if k in l:
+            return v
+    for f in FRUITS:
+        if f in l:
+            return f.title()
+    return None
+
+
+# ---------- local models (fallback) ----------
 def load(path, allowed):
     sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
     names = ast.literal_eval(sess.get_modelmeta().custom_metadata_map["names"])
@@ -18,15 +56,13 @@ def load(path, allowed):
     return sess, sess.get_inputs()[0].name, names, mask
 
 
-# Individual fruits come from the COCO model, the rest from our own model.
 MODELS = [
     load("yolov8n.onnx", {"apple", "orange", "banana"}),
-    load("best.onnx", {"pineapple", "watermelon", "grape", "grapes"}),
+    load("best.onnx", {"pineapple", "watermelon"}),
 ]
 
 
 def infer(model, img):
-    """Run one model on a BGR image. Returns (x1, y1, x2, y2, conf, name) tuples."""
     sess, inp, names, mask = model
     h, w = img.shape[:2]
     r = SIZE / max(h, w)
@@ -44,7 +80,8 @@ def infer(model, img):
         for (cx, cy, bw, bh), c, k in zip(boxes, conf, cls)
     ]
 
-   def tiles(img, n=3, overlap=0.2):
+
+def tiles(img, n=2, overlap=0.2):
     h, w = img.shape[:2]
     th, tw = int(h / n * (1 + overlap)), int(w / n * (1 + overlap))
     for i in range(n):
@@ -65,7 +102,6 @@ def nms(dets, thr=0.5):
 
 
 def drop_groups(dets):
-    """Remove one big box that covers 3 or more smaller boxes of the same fruit."""
     keep = []
     for a in dets:
         inside = sum(
@@ -76,6 +112,62 @@ def drop_groups(dets):
         if inside < 3:
             keep.append(a)
     return keep
+
+
+def local_detect(img):
+    dets = []
+    for m in MODELS:
+        dets += infer(m, img)
+    for x0, y0, t in tiles(img):
+        for a, b, c, d, cf, nm in infer(MODELS[0], t):
+            dets.append((a + x0, b + y0, c + x0, d + y0, cf, nm))
+    return drop_groups(nms(dets))
+
+
+# ---------- Gemini (main) ----------
+def ask(img):
+    h, w = img.shape[:2]
+    if max(h, w) > 1600:
+        s = 1600 / max(h, w)
+        img = cv2.resize(img, (int(w * s), int(h * s)))
+    ok, buf = cv2.imencode(".jpg", img)
+    resp = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[types.Part.from_bytes(data=buf.tobytes(), mime_type="image/jpeg"), PROMPT],
+        config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
+    )
+    return json.loads(resp.text)
+
+
+def to_dets(items, x0, y0, w, h):
+    dets = []
+    for it in items:
+        name = clean_label(str(it.get("label", "")))
+        if not name:
+            continue
+        y1, x1, y2, x2 = [float(v) / 1000 for v in it["box_2d"]]
+        dets.append((x0 + x1 * w, y0 + y1 * h, x0 + x2 * w, y0 + y2 * h, 1.0, name))
+    return dets
+
+
+def gemini_detect(img):
+    jobs = [(0, 0, img)]
+    if os.getenv("GEMINI_TILES", "1") == "1":
+        jobs += list(tiles(img))
+
+    def safe(job):
+        x0, y0, t = job
+        try:
+            return to_dets(ask(t), x0, y0, t.shape[1], t.shape[0])
+        except Exception as e:
+            print("Gemini call failed:", repr(e))
+            return None
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        results = list(ex.map(safe, jobs))
+    if results[0] is None:
+        raise RuntimeError("full-image Gemini call failed")
+    return nms([d for r in results if r for d in r], 0.5)
 
 
 @app.get("/")
@@ -98,20 +190,15 @@ def detect():
         if img is None:
             return jsonify(error="Could not read this image. Try a JPG or PNG."), 400
 
-        dets = []
-        for m in MODELS:
-            dets += infer(m, img)
-        for x0, y0, t in tiles(img):  # small fruits: also scan tiles (COCO model only)
-            for a, b, c, d, cf, nm in infer(MODELS[0], t):
-                dets.append((a + x0, b + y0, c + x0, d + y0, cf, nm))
-                 dets = drop_groups(nms(dets))
-           H, W = img.shape[:2]
-           if len(dets) >= 4:
-               dets = [
-                   d for d in dets
-                   if d[5] in ("Pineapple", "Watermelon", "Grape", "Grapes")
-                   or (d[2] - d[0]) * (d[3] - d[1]) < 0.10 * W * H
-               ]
+        dets = None
+        if client:
+            try:
+                dets = gemini_detect(img)
+            except Exception as e:
+                print("Gemini failed, using local models:", repr(e))
+        if dets is None:
+            dets = local_detect(img)
+
         preds = [
             {
                 "x": float((d[0] + d[2]) / 2), "y": float((d[1] + d[3]) / 2),
@@ -121,7 +208,8 @@ def detect():
             for d in dets
         ]
         return jsonify(predictions=preds)
-    except Exception:
+    except Exception as e:
+        print("Detect failed:", repr(e))
         return jsonify(error="Something went wrong while detecting. Please try another image."), 500
 
 

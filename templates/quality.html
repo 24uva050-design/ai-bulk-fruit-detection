@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fruit Quality Check</title>
+<style>
+body{margin:0;font-family:system-ui,sans-serif;background:#121a21;color:#d8e3ec;line-height:1.6}
+header{background:#3a5f7d;color:#fff;text-align:center;padding:36px 16px}
+header h1{margin:0}
+main{max-width:960px;margin:0 auto;padding:24px 16px}
+.card{background:#1b2630;border:1px solid #2c3b48;border-radius:14px;padding:20px}
+button{background:#3a5f7d;color:#fff;border:0;border-radius:8px;padding:10px 20px;cursor:pointer;font:inherit}
+button:disabled{opacity:.5}
+canvas{max-width:100%;height:auto;margin-top:16px;border-radius:10px}
+.chip{display:inline-block;color:#fff;border-radius:999px;padding:4px 14px;margin:8px 8px 0 0}
+a{color:#7fa8c9}
+</style></head><body>
+<header><h1>Fruit Quality Check</h1><p><a href="/" style="color:#fff">Back to fruit counter</a></p></header>
+<main><div class="card">
+<p>Finds fresh and rotten Apple, Banana and Orange. Use a clear, well-lit photo.</p>
+<input type="file" id="file" accept="image/*"> <button id="go" disabled>Check Quality</button>
+<div id="status" style="margin-top:12px"></div>
+<canvas id="cv" hidden></canvas>
+<div id="sum" style="font-size:1.3rem;font-weight:700;margin-top:12px"></div>
+<div id="chips"></div>
+</div></main>
+<script>
+const $=i=>document.getElementById(i),file=$("file"),go=$("go"),cv=$("cv"),ctx=cv.getContext("2d");let img=null;
+file.onchange=()=>{const f=file.files[0];if(!f)return;img=new Image();img.onload=()=>{cv.width=img.width;cv.height=img.height;ctx.drawImage(img,0,0);cv.hidden=false;go.disabled=false;$("sum").textContent="";$("chips").innerHTML="";$("status").textContent=""};img.src=URL.createObjectURL(f)};
+go.onclick=async()=>{go.disabled=true;$("status").textContent="Checking… the first request can take up to a minute.";
+try{const fd=new FormData();fd.append("image",file.files[0]);
+const res=await fetch("/api/quality",{method:"POST",body:fd});const t=await res.text();let d;
+try{d=JSON.parse(t)}catch{throw new Error("The server is waking up. Wait 30 seconds and try again.")}
+if(!res.ok)throw new Error(d.error||"Please try again.");
+const p=d.predictions||[];ctx.drawImage(img,0,0);const c={};const lw=Math.max(2,img.width/300);
+p.forEach(o=>{c[o.class]=(c[o.class]||0)+1;const col=o.state==="rotten"?"#e03131":"#2f9e44";
+const x=o.x-o.width/2,y=o.y-o.height/2;ctx.lineWidth=lw;ctx.strokeStyle=col;ctx.strokeRect(x,y,o.width,o.height);
+ctx.fillStyle=col;ctx.font=lw*6+"px sans-serif";ctx.fillText(o.class,x+2,Math.max(lw*6,y-4))});
+const rot=p.filter(o=>o.state==="rotten").length;
+$("sum").textContent=`Total: ${p.length} | Fresh: ${p.length-rot} | Rotten: ${rot}`;
+$("chips").innerHTML=Object.entries(c).map(([k,v])=>`<span class="chip" style="background:${k.toLowerCase().includes("rotten")?"#e03131":"#2f9e44"}">${k}: ${v}</span>`).join("");
+$("status").textContent=p.length?"":"No fruits found. Try a clearer photo.";
+}catch(e){$("status").textContent=e.message}finally{go.disabled=false}};
+</script></body></html>

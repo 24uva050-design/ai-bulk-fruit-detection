@@ -18,6 +18,13 @@ except Exception:
 
 app = Flask(__name__)
 
+# Fresh / rotten quality page (/quality). Needs quality.py, templates/quality.html, quality.onnx
+try:
+    from quality import bp as quality_bp
+    app.register_blueprint(quality_bp)
+except Exception as e:
+    print("Quality module not loaded:", repr(e))
+
 SIZE = 640
 CONF = 0.25
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -56,7 +63,7 @@ def clean_label(label):
     return None
 
 
-# ---------- local models (optional fallback) ----------
+# ---------- local models ----------
 def load(path, allowed):
     sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
     names = ast.literal_eval(sess.get_modelmeta().custom_metadata_map["names"])
@@ -93,7 +100,7 @@ def infer(model, img):
     ]
 
 
-def tiles(img, n=2, overlap=0.2):
+def tiles(img, n=3, overlap=0.2):
     h, w = img.shape[:2]
     th, tw = int(h / n * (1 + overlap)), int(w / n * (1 + overlap))
     for i in range(n):
@@ -138,9 +145,8 @@ def local_detect(img):
     return drop_groups(nms(dets))
 
 
-# ---------- Gemini (main) ----------
+# ---------- Gemini (used only when GEMINI_API_KEY is set) ----------
 def generate(contents, config=None):
-    """Call Gemini. Tries other model names if one is not found, retries on rate limit."""
     global WORKING_MODEL
     last = None
     for model in ([WORKING_MODEL] if WORKING_MODEL else MODEL_CANDIDATES):
@@ -188,7 +194,7 @@ def to_dets(items, x0, y0, w, h):
 def gemini_detect(img):
     jobs = [(0, 0, img)]
     if os.getenv("GEMINI_TILES", "1") == "1":
-        jobs += list(tiles(img))
+        jobs += list(tiles(img, n=2))
 
     def safe(job):
         x0, y0, t = job
@@ -216,6 +222,7 @@ def health():
     return (
         f"ok | key: {'set' if GEMINI_KEY else 'MISSING'} | library: {'ok' if genai else 'MISSING'}"
         f" | models: {MODEL_CANDIDATES} | local models loaded: {len(MODELS)}"
+        f" | quality page: {'ok' if 'quality' in app.blueprints else 'MISSING'}"
     )
 
 
@@ -243,11 +250,7 @@ def detect():
             return jsonify(error="Could not read this image. Try a JPG or PNG."), 400
 
         dets, reason = None, None
-        if genai is None:
-            reason = "google-genai library is not installed"
-        elif not GEMINI_KEY:
-            reason = "GEMINI_API_KEY is not set"
-        else:
+        if client:
             try:
                 dets = gemini_detect(img)
             except Exception as e:
@@ -258,7 +261,7 @@ def detect():
             if LOCAL_FALLBACK:
                 dets = local_detect(img)
             else:
-                return jsonify(error=f"Gemini could not process this image: {reason}. Open /gemini-test for details."), 502
+                return jsonify(error=f"Gemini could not process this image: {reason}"), 502
 
         preds = [
             {

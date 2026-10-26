@@ -18,16 +18,17 @@ except Exception:
 
 app = Flask(__name__)
 
-# Fresh / rotten quality page (/quality). Needs quality.py, templates/quality.html, quality.onnx
+# Fresh / rotten quality page (/quality) + damage marking on the main page.
+# Needs quality.py, templates/quality.html, quality.onnx
 try:
-    try:
     from quality import bp as quality_bp, rotten_boxes
     app.register_blueprint(quality_bp)
 except Exception as e:
     print("Quality module not loaded:", repr(e))
     rotten_boxes = lambda img: []
+
 SIZE = 640
-CONF = 0.25
+CONF = 0.30
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 LOCAL_FALLBACK = os.getenv("LOCAL_FALLBACK", "1") == "1"
 client = genai.Client(api_key=GEMINI_KEY) if (genai and GEMINI_KEY) else None
@@ -134,6 +135,26 @@ def drop_groups(dets):
     return keep
 
 
+def drop_nested(dets, thr=0.8):
+    """Remove a small box if it lies mostly inside a bigger box of the same fruit."""
+    keep = []
+    for a in dets:
+        area_a = (a[2] - a[0]) * (a[3] - a[1])
+        dup = False
+        for b in dets:
+            if b is a or b[5] != a[5]:
+                continue
+            ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+            iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+            area_b = (b[2] - b[0]) * (b[3] - b[1])
+            if area_b > area_a and ix * iy / max(area_a, 1) > thr:
+                dup = True
+                break
+        if not dup:
+            keep.append(a)
+    return keep
+
+
 def local_detect(img):
     if not MODELS:
         return []
@@ -143,7 +164,26 @@ def local_detect(img):
     for x0, y0, t in tiles(img):
         for a, b, c, d, cf, nm in infer(MODELS[0], t):
             dets.append((a + x0, b + y0, c + x0, d + y0, cf, nm))
-    return drop_groups(nms(dets))
+    return drop_nested(drop_groups(nms(dets)))
+
+
+def mark_damaged(dets, img):
+    """Relabel a fruit as 'Damaged <fruit>' when a rotten box overlaps it."""
+    rot = rotten_boxes(img)
+    if not rot:
+        return dets
+    out = []
+    for d in dets:
+        a1 = max(1, (d[2] - d[0]) * (d[3] - d[1]))
+        bad = False
+        for r in rot:
+            ix = max(0, min(d[2], r[2]) - max(d[0], r[0]))
+            iy = max(0, min(d[3], r[3]) - max(d[1], r[1]))
+            if ix * iy / a1 > 0.5:
+                bad = True
+                break
+        out.append((d[0], d[1], d[2], d[3], d[4], ("Damaged " + d[5]) if bad else d[5]))
+    return out
 
 
 # ---------- Gemini (used only when GEMINI_API_KEY is set) ----------
@@ -210,23 +250,7 @@ def gemini_detect(img):
     with ThreadPoolExecutor(max_workers=3) as ex:
         results = list(ex.map(safe, jobs))
     merged = [d for r in results if r for d in r]
-    return drop_groups(nms(merged, 0.4))
-
-def mark_damaged(dets, img):
-    """Relabel a fruit as 'Damaged <fruit>' when a rotten box overlaps it."""
-    rot = rotten_boxes(img)
-    out = []
-    for d in dets:
-        a1 = max(1, (d[2] - d[0]) * (d[3] - d[1]))
-        bad = False
-        for r in rot:
-            ix = max(0, min(d[2], r[2]) - max(d[0], r[0]))
-            iy = max(0, min(d[3], r[3]) - max(d[1], r[1]))
-            if ix * iy / a1 > 0.5:
-                bad = True
-                break
-        out.append((d[0], d[1], d[2], d[3], d[4], ("Damaged " + d[5]) if bad else d[5]))
-    return out
+    return drop_nested(drop_groups(nms(merged, 0.4)))
 
 
 @app.get("/")
@@ -279,6 +303,8 @@ def detect():
                 dets = local_detect(img)
             else:
                 return jsonify(error=f"Gemini could not process this image: {reason}"), 502
+
+        dets = mark_damaged(dets, img)
 
         preds = [
             {

@@ -44,6 +44,23 @@ def _tiles(img, n=2, ov=0.2):
             yield x0, y0, img[y0:y0 + th, x0:x0 + tw]
 
 
+def _all_dets(img):
+    dets = _infer(img)
+    for x0, y0, t in _tiles(img):
+        dets += [(a + x0, b + y0, c + x0, d + y0, cf, n) for a, b, c, d, cf, n in _infer(t)]
+    return dets
+
+
+def rotten_boxes(img):
+    """Boxes (x1, y1, x2, y2, conf) that the quality model calls rotten."""
+    try:
+        dets = _all_dets(img)
+    except Exception as e:
+        print("quality model error:", repr(e))
+        return []
+    return [(d[0], d[1], d[2], d[3], d[4]) for d in dets if "rotten" in d[5].lower()]
+
+
 @bp.get("/quality")
 def page():
     return render_template("quality.html")
@@ -57,12 +74,10 @@ def quality():
         if img is None:
             return jsonify(error="Please choose a JPG or PNG image."), 400
         try:
-            dets = _infer(img)
+            dets = _all_dets(img)
         except Exception as e:
             print("quality model error:", repr(e))
             return jsonify(error="Quality model is not available yet (quality.onnx missing)."), 503
-        for x0, y0, t in _tiles(img):
-            dets += [(a + x0, b + y0, c + x0, d + y0, cf, n) for a, b, c, d, cf, n in _infer(t)]
         keep = []
         for n in {d[5] for d in dets}:
             ds = [d for d in dets if d[5] == n]
@@ -79,11 +94,3 @@ def quality():
     except Exception as e:
         print("quality failed:", repr(e))
         return jsonify(error="Something went wrong. Please try another image."), 500
-        def rotten_boxes(img):
-    """Returns list of (x1, y1, x2, y2, conf) for boxes the quality model calls rotten."""
-    try:
-        dets = _infer(img)
-    except Exception as e:
-        print("quality model error:", repr(e))
-        return []
-    return [(d[0], d[1], d[2], d[3], d[4]) for d in dets if "rotten" in d[5].lower()]

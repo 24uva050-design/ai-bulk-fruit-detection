@@ -20,11 +20,12 @@ app = Flask(__name__)
 
 # Fresh / rotten quality page (/quality). Needs quality.py, templates/quality.html, quality.onnx
 try:
-    from quality import bp as quality_bp
+    try:
+    from quality import bp as quality_bp, rotten_boxes
     app.register_blueprint(quality_bp)
 except Exception as e:
     print("Quality module not loaded:", repr(e))
-
+    rotten_boxes = lambda img: []
 SIZE = 640
 CONF = 0.25
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")

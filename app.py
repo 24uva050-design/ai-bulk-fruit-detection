@@ -26,7 +26,7 @@ except Exception as e:
     print("Quality module not loaded:", repr(e))
 
 SIZE = 640
-CONF = 0.25
+CONF = 0.15
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 LOCAL_FALLBACK = os.getenv("LOCAL_FALLBACK", "1") == "1"
 client = genai.Client(api_key=GEMINI_KEY) if (genai and GEMINI_KEY) else None
@@ -132,7 +132,9 @@ def drop_groups(dets):
             keep.append(a)
     return keep
 
+
 def drop_nested(dets, thr=0.8):
+    """Remove a small box if it lies mostly inside a bigger box of the same fruit."""
     keep = []
     for a in dets:
         area_a = (a[2] - a[0]) * (a[3] - a[1])
@@ -150,6 +152,7 @@ def drop_nested(dets, thr=0.8):
             keep.append(a)
     return keep
 
+
 def local_detect(img):
     if not MODELS:
         return []
@@ -159,7 +162,7 @@ def local_detect(img):
     for x0, y0, t in tiles(img):
         for a, b, c, d, cf, nm in infer(MODELS[0], t):
             dets.append((a + x0, b + y0, c + x0, d + y0, cf, nm))
-        return drop_nested(drop_groups(nms(dets)))
+    return drop_nested(drop_groups(nms(dets)))
 
 
 # ---------- Gemini (used only when GEMINI_API_KEY is set) ----------
@@ -226,7 +229,7 @@ def gemini_detect(img):
     with ThreadPoolExecutor(max_workers=3) as ex:
         results = list(ex.map(safe, jobs))
     merged = [d for r in results if r for d in r]
-    return drop_groups(nms(merged, 0.4))
+    return drop_nested(drop_groups(nms(merged, 0.4)))
 
 
 @app.get("/")

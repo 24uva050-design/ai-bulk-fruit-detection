@@ -212,6 +212,22 @@ def gemini_detect(img):
     merged = [d for r in results if r for d in r]
     return drop_groups(nms(merged, 0.4))
 
+def mark_damaged(dets, img):
+    """Relabel a fruit as 'Damaged <fruit>' when a rotten box overlaps it."""
+    rot = rotten_boxes(img)
+    out = []
+    for d in dets:
+        a1 = max(1, (d[2] - d[0]) * (d[3] - d[1]))
+        bad = False
+        for r in rot:
+            ix = max(0, min(d[2], r[2]) - max(d[0], r[0]))
+            iy = max(0, min(d[3], r[3]) - max(d[1], r[1]))
+            if ix * iy / a1 > 0.5:
+                bad = True
+                break
+        out.append((d[0], d[1], d[2], d[3], d[4], ("Damaged " + d[5]) if bad else d[5]))
+    return out
+
 
 @app.get("/")
 def home():

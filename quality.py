@@ -79,3 +79,11 @@ def quality():
     except Exception as e:
         print("quality failed:", repr(e))
         return jsonify(error="Something went wrong. Please try another image."), 500
+        def rotten_boxes(img):
+    """Returns list of (x1, y1, x2, y2, conf) for boxes the quality model calls rotten."""
+    try:
+        dets = _infer(img)
+    except Exception as e:
+        print("quality model error:", repr(e))
+        return []
+    return [(d[0], d[1], d[2], d[3], d[4]) for d in dets if "rotten" in d[5].lower()]

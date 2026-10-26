@@ -132,6 +132,23 @@ def drop_groups(dets):
             keep.append(a)
     return keep
 
+def drop_nested(dets, thr=0.8):
+    keep = []
+    for a in dets:
+        area_a = (a[2] - a[0]) * (a[3] - a[1])
+        dup = False
+        for b in dets:
+            if b is a or b[5] != a[5]:
+                continue
+            ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+            iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+            area_b = (b[2] - b[0]) * (b[3] - b[1])
+            if area_b > area_a and ix * iy / max(area_a, 1) > thr:
+                dup = True
+                break
+        if not dup:
+            keep.append(a)
+    return keep
 
 def local_detect(img):
     if not MODELS:
@@ -142,7 +159,7 @@ def local_detect(img):
     for x0, y0, t in tiles(img):
         for a, b, c, d, cf, nm in infer(MODELS[0], t):
             dets.append((a + x0, b + y0, c + x0, d + y0, cf, nm))
-    return drop_groups(nms(dets))
+        return drop_nested(drop_groups(nms(dets)))
 
 
 # ---------- Gemini (used only when GEMINI_API_KEY is set) ----------

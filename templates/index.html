@@ -21,7 +21,8 @@ button:disabled{opacity:.5}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 canvas{max-width:100%;height:auto;margin-top:16px;border-radius:10px}
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.chip{background:var(--accent);color:#fff;border-radius:999px;padding:4px 14px}
+.chip{background:#2f9e44;color:#fff;border-radius:999px;padding:4px 14px}
+.chip.bad{background:#e03131}
 .total{font-size:1.4rem;font-weight:700;margin-top:12px}
 #status{margin-top:12px}
 </style>
@@ -33,7 +34,7 @@ canvas{max-width:100%;height:auto;margin-top:16px;border-radius:10px}
 <main>
   <h2>Live Demo</h2>
   <div class="card">
-    <p class="hint">Detects: Apple, Banana, Grape, Orange, Pineapple, Watermelon. Use a clear, well-lit photo.</p>
+    <p class="hint">Detects: Apple, Orange, Banana, Pineapple, Watermelon. Damaged fruits are marked in red. Use a clear, well-lit photo.</p>
     <div class="row">
       <input type="file" id="file" accept="image/*">
       <button id="go" disabled>Detect &amp; Count</button>
@@ -65,7 +66,7 @@ file.onchange = () => {
 
 go.onclick = async () => {
   go.disabled = true;
-  $("status").textContent = "Detecting… the first request can take up to a minute while the server wakes up.";
+  $("status").textContent = "Detecting… this can take up to a minute while the server wakes up.";
   try {
     const fd = new FormData(); fd.append("image", file.files[0]);
     const res = await fetch("/api/detect", { method: "POST", body: fd });
@@ -82,15 +83,18 @@ go.onclick = async () => {
     preds.forEach(p => {
       counts[p.class] = (counts[p.class] || 0) + 1;
       const x = p.x - p.width / 2, y = p.y - p.height / 2;
-      ctx.lineWidth = lw; ctx.strokeStyle = "#e8590c"; ctx.strokeRect(x, y, p.width, p.height);
-      ctx.fillStyle = "#e8590c"; ctx.font = `${lw * 6}px sans-serif`;
+      const bad = p.class.startsWith("Damaged");
+      const col = bad ? "#e03131" : "#2f9e44";
+      ctx.lineWidth = lw; ctx.strokeStyle = col; ctx.strokeRect(x, y, p.width, p.height);
+      ctx.fillStyle = col; ctx.font = `${lw * 6}px sans-serif`;
       ctx.fillText(p.class, x + 2, Math.max(lw * 6, y - 4));
     });
-    $("total").textContent = `Total fruits: ${preds.length}`;
+    const dmg = preds.filter(p => p.class.startsWith("Damaged")).length;
+    $("total").textContent = `Total: ${preds.length} | Fresh: ${preds.length - dmg} | Damaged: ${dmg}`;
     $("chips").innerHTML = Object.entries(counts)
-      .map(([k, v]) => `<span class="chip">${k}: ${v}</span>`).join("");
+      .map(([k, v]) => `<span class="chip${k.startsWith("Damaged") ? " bad" : ""}">${k}: ${v}</span>`).join("");
     $("status").textContent = preds.length ? "" :
-      "No fruits detected. Try a clear photo of an apple, banana, orange, grape, pineapple or watermelon.";
+      "No fruits detected. Try a clear photo of an apple, orange, banana, pineapple or watermelon.";
   } catch (e) {
     $("status").textContent = e.message;
   } finally { go.disabled = false; }

@@ -28,7 +28,9 @@ except Exception as e:
     rotten_boxes = lambda img: []
 
 SIZE = 640
-CONF = 0.30
+CONF = 0.25
+MAX_SIDE = 1280
+TILES_N = 2
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 LOCAL_FALLBACK = os.getenv("LOCAL_FALLBACK", "1") == "1"
 client = genai.Client(api_key=GEMINI_KEY) if (genai and GEMINI_KEY) else None
@@ -67,7 +69,9 @@ def clean_label(label):
 
 # ---------- local models ----------
 def load(path, allowed):
-    sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = 2
+    sess = ort.InferenceSession(path, sess_options=so, providers=["CPUExecutionProvider"])
     names = ast.literal_eval(sess.get_modelmeta().custom_metadata_map["names"])
     mask = np.array([names[i].lower() in allowed for i in range(len(names))], dtype=np.float32)
     return sess, sess.get_inputs()[0].name, names, mask
@@ -102,7 +106,7 @@ def infer(model, img):
     ]
 
 
-def tiles(img, n=3, overlap=0.2):
+def tiles(img, n=2, overlap=0.2):
     h, w = img.shape[:2]
     th, tw = int(h / n * (1 + overlap)), int(w / n * (1 + overlap))
     for i in range(n):
@@ -161,14 +165,14 @@ def local_detect(img):
     dets = []
     for m in MODELS:
         dets += infer(m, img)
-    for x0, y0, t in tiles(img):
+    for x0, y0, t in tiles(img, n=TILES_N):
         for a, b, c, d, cf, nm in infer(MODELS[0], t):
             dets.append((a + x0, b + y0, c + x0, d + y0, cf, nm))
     return drop_nested(drop_groups(nms(dets)))
 
 
 def mark_damaged(dets, img):
-    """Relabel a fruit as 'Damaged <fruit>' when a rotten box overlaps it."""
+    """Relabel a fruit as 'Damaged <fruit>' only when a confident rotten box clearly matches it."""
     rot = rotten_boxes(img)
     if not rot:
         return dets
@@ -179,7 +183,8 @@ def mark_damaged(dets, img):
         for r in rot:
             ix = max(0, min(d[2], r[2]) - max(d[0], r[0]))
             iy = max(0, min(d[3], r[3]) - max(d[1], r[1]))
-            if ix * iy / a1 > 0.5:
+            r_area = max(1, (r[2] - r[0]) * (r[3] - r[1]))
+            if ix * iy / a1 > 0.6 and ix * iy / r_area > 0.4:
                 bad = True
                 break
         out.append((d[0], d[1], d[2], d[3], d[4], ("Damaged " + d[5]) if bad else d[5]))
@@ -290,6 +295,11 @@ def detect():
         if img is None:
             return jsonify(error="Could not read this image. Try a JPG or PNG."), 400
 
+        h, w = img.shape[:2]
+        if max(h, w) > MAX_SIDE:
+            s = MAX_SIDE / max(h, w)
+            img = cv2.resize(img, (int(w * s), int(h * s)))
+
         dets, reason = None, None
         if client:
             try:
@@ -314,7 +324,7 @@ def detect():
             }
             for d in dets
         ]
-        return jsonify(predictions=preds)
+        return jsonify(predictions=preds, width=int(img.shape[1]), height=int(img.shape[0]))
     except Exception as e:
         print("Detect failed:", repr(e))
         return jsonify(error="Something went wrong while detecting. Please try another image."), 500

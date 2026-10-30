@@ -31,6 +31,8 @@ SIZE = 640
 CONF = 0.25
 MAX_SIDE = 1280
 TILES_N = 2
+MOLD_LIMIT = 0.10   # orange: share of white/green/gray mold pixels that counts as damaged
+DARK_LIMIT = 0.18   # banana: share of dark spot pixels that counts as damaged
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 LOCAL_FALLBACK = os.getenv("LOCAL_FALLBACK", "1") == "1"
 client = genai.Client(api_key=GEMINI_KEY) if (genai and GEMINI_KEY) else None
@@ -171,23 +173,60 @@ def local_detect(img):
     return drop_nested(drop_groups(nms(dets)))
 
 
+# ---------- damage marking ----------
+def fruit_from_class(name):
+    """'Rotten Orange' / 'rotten_benana' -> 'Orange' / 'Banana' / 'Apple' (None if unknown)."""
+    n = name.lower()
+    if "orange" in n:
+        return "Orange"
+    if "banana" in n or "benana" in n:
+        return "Banana"
+    if "apple" in n:
+        return "Apple"
+    return None
+
+
+def color_damage(img, d):
+    """Colour check inside the fruit box (centre 60%). True if it looks mouldy/spoiled."""
+    fruit = d[5]
+    if fruit not in ("Orange", "Banana"):
+        return False
+    h, w = img.shape[:2]
+    cx, cy = (d[0] + d[2]) / 2, (d[1] + d[3]) / 2
+    bw, bh = (d[2] - d[0]) * 0.6, (d[3] - d[1]) * 0.6
+    x1, x2 = int(max(0, cx - bw / 2)), int(min(w, cx + bw / 2))
+    y1, y2 = int(max(0, cy - bh / 2)), int(min(h, cy + bh / 2))
+    if x2 - x1 < 8 or y2 - y1 < 8:
+        return False
+    hsv = cv2.cvtColor(img[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+    hh, ss, vv = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    if fruit == "Orange":
+        white = (ss < 70) & (vv > 140)                     # white / gray mould
+        green = (hh >= 35) & (hh <= 95) & (ss > 40) & (vv > 50)  # green mould
+        return float((white | green).mean()) > MOLD_LIMIT
+    dark = vv < 70                                          # banana: dark spots
+    return float(dark.mean()) > DARK_LIMIT
+
+
 def mark_damaged(dets, img):
-    """Relabel a fruit as 'Damaged <fruit>' when a rotten box clearly matches it."""
+    """Mark 'Damaged <fruit>' using the quality model and a colour check."""
     rot = rotten_boxes(img)
-    if not rot:
-        return dets
     out = []
     for d in dets:
         a1 = max(1, (d[2] - d[0]) * (d[3] - d[1]))
-        bad = False
+        bad, fruit = False, d[5]
         for r in rot:
             ix = max(0, min(d[2], r[2]) - max(d[0], r[0]))
             iy = max(0, min(d[3], r[3]) - max(d[1], r[1]))
             r_area = max(1, (r[2] - r[0]) * (r[3] - r[1]))
             if ix * iy / a1 > 0.5 and ix * iy / r_area > 0.25:
                 bad = True
+                # take the fruit type from the quality model (fixes Orange labelled as Apple)
+                fruit = fruit_from_class(r[5]) or fruit
                 break
-        out.append((d[0], d[1], d[2], d[3], d[4], ("Damaged " + d[5]) if bad else d[5]))
+        if not bad and color_damage(img, d):
+            bad = True
+        out.append((d[0], d[1], d[2], d[3], d[4], ("Damaged " + fruit) if bad else fruit))
     return out
 
 

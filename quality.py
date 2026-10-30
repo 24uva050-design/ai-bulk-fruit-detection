@@ -1,3 +1,4 @@
+
 import ast
 
 import cv2
@@ -13,13 +14,15 @@ _m = None
 def _load():
     global _m
     if _m is None:
-        s = ort.InferenceSession("quality.onnx", providers=["CPUExecutionProvider"])
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = 2
+        s = ort.InferenceSession("quality.onnx", sess_options=so, providers=["CPUExecutionProvider"])
         names = ast.literal_eval(s.get_modelmeta().custom_metadata_map["names"])
         _m = (s, s.get_inputs()[0].name, names)
     return _m
 
 
-def _infer(img):
+def _infer(img, conf_thr=CONF):
     s, inp, names = _load()
     h, w = img.shape[:2]
     r = SIZE / max(h, w)
@@ -29,7 +32,7 @@ def _infer(img):
     x = np.ascontiguousarray(canvas[:, :, ::-1].transpose(2, 0, 1)[None]).astype(np.float32) / 255
     out = s.run(None, {inp: x})[0][0].T
     cls, conf = out[:, 4:].argmax(1), out[:, 4:].max(1)
-    k = conf > CONF
+    k = conf > conf_thr
     boxes, cls, conf = out[k, :4] / r, cls[k], conf[k]
     return [(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2, float(c), names[int(i)])
             for (cx, cy, bw, bh), c, i in zip(boxes, conf, cls)]
@@ -52,9 +55,10 @@ def _all_dets(img):
 
 
 def rotten_boxes(img):
-    """Boxes (x1, y1, x2, y2, conf) that the quality model calls rotten."""
+    """Boxes (x1, y1, x2, y2, conf) the quality model calls rotten.
+    Full image only, high confidence, so the main page stays fast."""
     try:
-        dets = _all_dets(img)
+        dets = _infer(img, conf_thr=0.50)
     except Exception as e:
         print("quality model error:", repr(e))
         return []
@@ -73,6 +77,10 @@ def quality():
         img = cv2.imdecode(np.frombuffer(f.read(), np.uint8), cv2.IMREAD_COLOR) if f else None
         if img is None:
             return jsonify(error="Please choose a JPG or PNG image."), 400
+        h, w = img.shape[:2]
+        if max(h, w) > 1280:
+            s = 1280 / max(h, w)
+            img = cv2.resize(img, (int(w * s), int(h * s)))
         try:
             dets = _all_dets(img)
         except Exception as e:

@@ -56,9 +56,9 @@ def _all_dets(img):
 
 def rotten_boxes(img):
     """Boxes (x1, y1, x2, y2, conf) the quality model calls rotten.
-    Full image only, high confidence, so the main page stays fast."""
+    Full image only, so the main page stays fast."""
     try:
-        dets = _infer(img, conf_thr=0.50)
+        dets = _infer(img, conf_thr=0.30)
     except Exception as e:
         print("quality model error:", repr(e))
         return []

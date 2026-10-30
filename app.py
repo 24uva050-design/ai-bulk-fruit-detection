@@ -172,7 +172,7 @@ def local_detect(img):
 
 
 def mark_damaged(dets, img):
-    """Relabel a fruit as 'Damaged <fruit>' only when a confident rotten box clearly matches it."""
+    """Relabel a fruit as 'Damaged <fruit>' when a rotten box clearly matches it."""
     rot = rotten_boxes(img)
     if not rot:
         return dets
@@ -184,7 +184,7 @@ def mark_damaged(dets, img):
             ix = max(0, min(d[2], r[2]) - max(d[0], r[0]))
             iy = max(0, min(d[3], r[3]) - max(d[1], r[1]))
             r_area = max(1, (r[2] - r[0]) * (r[3] - r[1]))
-            if ix * iy / a1 > 0.6 and ix * iy / r_area > 0.4:
+            if ix * iy / a1 > 0.5 and ix * iy / r_area > 0.25:
                 bad = True
                 break
         out.append((d[0], d[1], d[2], d[3], d[4], ("Damaged " + d[5]) if bad else d[5]))

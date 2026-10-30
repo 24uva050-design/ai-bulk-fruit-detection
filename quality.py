@@ -55,14 +55,13 @@ def _all_dets(img):
 
 
 def rotten_boxes(img):
-    """Boxes (x1, y1, x2, y2, conf) the quality model calls rotten.
-    Full image only, so the main page stays fast."""
+    """Boxes (x1, y1, x2, y2, conf, class_name) the quality model calls rotten."""
     try:
-        dets = _infer(img, conf_thr=0.30)
+        dets = _infer(img, conf_thr=0.25)
     except Exception as e:
         print("quality model error:", repr(e))
         return []
-    return [(d[0], d[1], d[2], d[3], d[4]) for d in dets if "rotten" in d[5].lower()]
+    return [(d[0], d[1], d[2], d[3], d[4], d[5]) for d in dets if "rotten" in d[5].lower()]
 
 
 @bp.get("/quality")

@@ -66,10 +66,15 @@ file.onchange = () => {
 
 go.onclick = async () => {
   go.disabled = true;
-  $("status").textContent = "Detecting… this can take up to a minute while the server wakes up.";
+  $("status").textContent = "Detecting… this can take up to 1-2 minutes. Please wait.";
   try {
     const fd = new FormData(); fd.append("image", file.files[0]);
-    const res = await fetch("/api/detect", { method: "POST", body: fd });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 200000);
+    let res;
+    try { res = await fetch("/api/detect", { method: "POST", body: fd, signal: ctrl.signal }); }
+    catch { throw new Error("The server took too long. Please try again with a smaller image."); }
+    finally { clearTimeout(timer); }
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
@@ -77,15 +82,18 @@ go.onclick = async () => {
     if (!res.ok) throw new Error(data.error || "Please try again.");
 
     const preds = data.predictions || [];
+    const sx = data.width ? img.width / data.width : 1;
+    const sy = data.height ? img.height / data.height : 1;
     ctx.drawImage(img, 0, 0);
     const counts = {};
     const lw = Math.max(2, img.width / 300);
     preds.forEach(p => {
       counts[p.class] = (counts[p.class] || 0) + 1;
-      const x = p.x - p.width / 2, y = p.y - p.height / 2;
+      const w = p.width * sx, h = p.height * sy;
+      const x = p.x * sx - w / 2, y = p.y * sy - h / 2;
       const bad = p.class.startsWith("Damaged");
       const col = bad ? "#e03131" : "#2f9e44";
-      ctx.lineWidth = lw; ctx.strokeStyle = col; ctx.strokeRect(x, y, p.width, p.height);
+      ctx.lineWidth = lw; ctx.strokeStyle = col; ctx.strokeRect(x, y, w, h);
       ctx.fillStyle = col; ctx.font = `${lw * 6}px sans-serif`;
       ctx.fillText(p.class, x + 2, Math.max(lw * 6, y - 4));
     });
